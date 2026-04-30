@@ -48,6 +48,18 @@ if "current_page" not in st.session_state:
     st.session_state["current_page"] = 1
 if "key_validation_msg" not in st.session_state:
     st.session_state["key_validation_msg"] = None
+if "searched_region" not in st.session_state:
+    st.session_state["searched_region"] = ""
+if "searched_dates" not in st.session_state:
+    st.session_state["searched_dates"] = (None, None)
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def check_image_valid(url):
+    try:
+        resp = requests.get(url, timeout=0.5, stream=True)
+        return resp.status_code == 200
+    except Exception:
+        return False
 
 # --- 사이드바: API 설정 ---
 with st.sidebar:
@@ -276,10 +288,25 @@ if st.button("🚀 최저가 검색하기", use_container_width=True):
                     st.error(f"API 요청 실패: {error_msg}")
                 else:
                     st.session_state["search_results"] = results
+                    st.session_state["searched_region"] = region
+                    st.session_state["searched_dates"] = dates
 
 # --- 4. 결과 출력 및 정렬/페이징 ---
 if st.session_state["search_results"] is not None:
-    results = st.session_state["search_results"]
+    # 1. 예산(budget) 필터 실제 적용
+    min_budget, max_budget = budget
+    filtered_results = []
+    for r in st.session_state["search_results"]:
+        price = (r.get("rate_per_night") or {}).get("extracted_lowest")
+        if not isinstance(price, (int, float)) or (min_budget <= price <= max_budget):
+            filtered_results.append(r)
+            
+    results = filtered_results
+    
+    # 2. 박제된 검색 시점의 조건 불러오기
+    searched_dates = st.session_state["searched_dates"]
+    check_in, check_out = searched_dates if isinstance(searched_dates, tuple) and len(searched_dates) == 2 else (None, None)
+    searched_region = st.session_state["searched_region"]
     
     if not results:
         st.warning("검색 결과가 없습니다.")
@@ -346,14 +373,9 @@ if st.session_state["search_results"] is not None:
                         elif isinstance(first_img, str):
                             img_url = first_img
                     
-                    # 브라우저 엑박(깨진 이미지) 방지: URL이 유효한지 실시간 검증 (HTTP 200 응답 체크)
+                    # 브라우저 엑박(깨진 이미지) 방지: 캐싱된 함수 적용 (성능 획기적 개선)
                     if isinstance(img_url, str) and img_url.startswith("http"):
-                        try:
-                            # 0.5초 안에 응답이 없거나 200 OK가 아니면 플레이스홀더 사용
-                            img_check = requests.get(img_url, timeout=0.5, stream=True)
-                            if img_check.status_code != 200:
-                                img_url = placeholder_path
-                        except Exception:
+                        if not check_image_valid(img_url):
                             img_url = placeholder_path
                     else:
                         img_url = placeholder_path
@@ -466,14 +488,17 @@ if st.session_state["search_results"] is not None:
                     google_link = res.get("link")
                     # 만약 링크가 google.com이 아닌 공식 홈페이지(마리오트 등)로 곧바로 빠지는 경우, 구글 검색으로 우회
                     if not google_link or "google.com" not in google_link:
-                        check_in_str = check_in.strftime('%Y-%m-%d')
-                        check_out_str = check_out.strftime('%Y-%m-%d')
-                        query_str = f"{region} {hotel_name} {check_in_str} {check_out_str}"
+                        if check_in and check_out:
+                            check_in_str = check_in.strftime('%Y-%m-%d')
+                            check_out_str = check_out.strftime('%Y-%m-%d')
+                            query_str = f"{searched_region} {hotel_name} {check_in_str} {check_out_str}"
+                        else:
+                            query_str = f"{searched_region} {hotel_name}"
                         encoded_query = urllib.parse.quote(query_str)
                         google_link = f"https://www.google.com/search?q={encoded_query}"
                     
                     # 네이버 호텔 대신 네이버 지도 검색 딥링크 사용 (네이버는 자체 ID가 없으면 날짜/인원 딥링크 연동 거부)
-                    naver_query = f"{region} {hotel_name}"
+                    naver_query = f"{searched_region} {hotel_name}"
                     encoded_naver_query = urllib.parse.quote(naver_query)
                     naver_link = f"https://map.naver.com/p/search/{encoded_naver_query}"
                     
