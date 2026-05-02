@@ -293,13 +293,52 @@ if st.button("🚀 최저가 검색하기", use_container_width=True):
 
 # --- 4. 결과 출력 및 정렬/페이징 ---
 if st.session_state["search_results"] is not None:
-    # 1. 예산(budget) 필터 실제 적용
+    # 1. 예산, 숙소 유형, 필수 옵션 필터 실제 적용
     min_budget, max_budget = budget
     filtered_results = []
+    
     for r in st.session_state["search_results"]:
+        # 예산 필터
         price = (r.get("rate_per_night") or {}).get("extracted_lowest")
-        if not isinstance(price, (int, float)) or (min_budget <= price <= max_budget):
-            filtered_results.append(r)
+        if isinstance(price, (int, float)) and not (min_budget <= price <= max_budget):
+            continue
+            
+        name_lower = r.get("name", "").lower()
+        amenities = [a.lower() for a in r.get("amenities", [])]
+        amenities_str = " ".join(amenities)
+        
+        # 숙소 유형 필터 (하나라도 만족하면 통과, OR 조건)
+        if acc_type:
+            type_match = False
+            for t in acc_type:
+                if t == "호텔" and ("호텔" in name_lower or "hotel" in name_lower or r.get("type") == "hotel"):
+                    type_match = True; break
+                elif t == "리조트" and ("리조트" in name_lower or "resort" in name_lower):
+                    type_match = True; break
+                elif t == "펜션/풀빌라" and any(x in name_lower for x in ["펜션", "풀빌라", "빌라", "pension", "villa"]):
+                    type_match = True; break
+                elif t == "게스트하우스/호스텔" and any(x in name_lower for x in ["게스트", "호스텔", "guesthouse", "hostel"]):
+                    type_match = True; break
+                elif t == "모텔" and ("모텔" in name_lower or "motel" in name_lower):
+                    type_match = True; break
+            if not type_match:
+                continue
+                
+        # 필수 옵션 필터 (모두 만족해야 통과, AND 조건)
+        if options:
+            opt_match = True
+            for opt in options:
+                if opt == "조식 포함" and not any(x in amenities_str for x in ["breakfast", "조식"]):
+                    opt_match = False; break
+                elif opt == "수영장" and not any(x in amenities_str for x in ["pool", "수영장"]):
+                    opt_match = False; break
+                elif opt == "반려동물 동반" and not any(x in amenities_str for x in ["pet", "반려동물", "dog"]):
+                    opt_match = False; break
+                # 무료 취소 가능은 구글 API 응답(amenities)에 명확히 안 나오는 경우가 많아 유연하게 처리
+            if not opt_match:
+                continue
+                
+        filtered_results.append(r)
             
     results = filtered_results
     
